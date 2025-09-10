@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MP3 Visualizer with Smooth UI/UX</title>
+  <style>
+    :root{
+      --bg1:#0f172a;
+      --bg2:#071036;
+      --accent:#7c3aed;
+      --accent2:#06b6d4;
+      --muted:#9ca3af;
+    }
+    html,body{height:100%;margin:0;font-family:Inter, sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:#e6eef8;transition:background 0.3s}
+    body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .app{width:100%;max-width:1100px;padding:24px;box-sizing:border-box;text-align:center;transition:all 0.3s}
+    .uploadZone{display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:16px;padding:30px;margin-bottom:20px;background:rgba(255,255,255,0.05);cursor:pointer;transition:all 0.3s;backdrop-filter: blur(10px); border:2px dashed rgba(255,255,255,0.2)}
+    .uploadZone:hover{background:rgba(255,255,255,0.1);transform:scale(1.02)}
+    .uploadZone input{display:none}
+    .uploadZone span{font-size:18px;color:#fff;font-weight:600}
+    button{background:rgba(255,255,255,0.05);border:none;padding:10px 16px;border-radius:12px;color:inherit;cursor:pointer;margin:4px;transition:all 0.2s;backdrop-filter: blur(8px)}
+    button:hover{background:rgba(124,58,237,0.2);transform:scale(1.05)}
+    button.big{font-size:16px;font-weight:600}
+    .meta{font-size:14px;color:var(--muted);margin-top:8px;transition:all 0.3s}
+    .visWrap{position:relative;margin-top:20px}
+    canvas{width:100%;height:500px;border-radius:20px;display:block;background:rgba(0,0,0,0.15);transition:all 0.3s}
+    .centerImg{position:absolute;width:200px;height:200px;border-radius:50%;overflow:hidden;border:6px solid rgba(255,255,255,0.06);box-shadow:0 10px 40px rgba(0,0,0,0.7);top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.12));z-index:2;transition:all 0.3s}
+    .centerImg img{width:100%;height:100%;object-fit:cover;display:block;transition:all 0.3s}
+    .bottomControls{display:flex;align-items:center;gap:12px;margin-top:12px;transition:all 0.3s}
+    .range{appearance:none;height:8px;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));outline:none;transition:all 0.3s}
+    .range:hover{height:10px}
+    .small{font-size:13px;color:var(--muted)}
+    footer{margin-top:14px;color:var(--muted);font-size:13px}
+    .playlist{margin-top:12px;max-height:180px;overflow-y:auto;text-align:left;border-radius:12px;backdrop-filter: blur(8px);background:rgba(255,255,255,0.05);padding:6px;transition:all 0.3s}
+    .playlist button{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.05);margin-bottom:4px;border-radius:8px;transition:all 0.2s}
+    .playlist button:hover{background:rgba(124,58,237,0.3);transform:scale(1.02)}
+    :-webkit-full-screen{background:black;}
+    :-moz-full-screen{background:black;}
+    :-ms-fullscreen{background:black;}
+    :fullscreen{background:black;}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <label class="uploadZone">
+      <span>Upload MP3(s)</span>
+      <input id="file" type="file" accept="audio/*" multiple>
+    </label>
+    <div>
+      <button id="playBtn" class="big" disabled>Play</button>
+      <button id="pauseBtn" disabled>Pause</button>
+    </div>
+    <div class="meta" id="meta">No file loaded — choose MP3(s)</div>
+
+    <div class="visWrap">
+      <canvas id="canvas"></canvas>
+      <div class="centerImg" id="centerImg">
+        <img id="coverImg" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600'><rect width='100%' height='100%' fill='%230b1221'/><text x='50%' y='50%' font-size='36' fill='%237c3aed' dominant-baseline='middle' text-anchor='middle' font-family='Arial'>No Cover</text></svg>" alt="cover">
+      </div>
+    </div>
+
+    <div class="bottomControls">
+      <input id="seek" type="range" min="0" max="100" value="0" class="range" style="flex:1">
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.9" style="width:120px" class="range">
+      <div class="small" id="time">00:00 / 00:00</div>
+    </div>
+
+    <div class="playlist" id="playlist"></div>
+
+    <footer>Click the canvas for immersive fullscreen • Smooth radial + waveform + particles</footer>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
+<script>
+const fileEl=document.getElementById('file');
+const playBtn=document.getElementById('playBtn');
+const pauseBtn=document.getElementById('pauseBtn');
+const meta=document.getElementById('meta');
+const coverImg=document.getElementById('coverImg');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const seek=document.getElementById('seek');
+const volume=document.getElementById('volume');
+const timeEl=document.getElementById('time');
+const playlistEl=document.getElementById('playlist');
+let audioCtx,audioElem,analyser,dataArray,bufferLength,rafId,fileQueue=[],currentIndex=0,particles=[];
+function resizeCanvas(){canvas.width=canvas.clientWidth*devicePixelRatio;canvas.height=canvas.clientHeight*devicePixelRatio;}window.addEventListener('resize',resizeCanvas);resizeCanvas();
+function setupAudio(file){if(audioCtx)audioCtx.close();audioCtx=new(window.AudioContext||window.webkitAudioContext)();if(audioElem){audioElem.pause();audioElem.src='';audioElem.remove();}audioElem=new Audio();audioElem.src=URL.createObjectURL(file);audioElem.crossOrigin='anonymous';const track=audioCtx.createMediaElementSource(audioElem);analyser=audioCtx.createAnalyser();analyser.fftSize=1024;bufferLength=analyser.frequencyBinCount;dataArray=new Uint8Array(bufferLength);const gain=audioCtx.createGain();gain.gain.value=parseFloat(volume.value);track.connect(gain).connect(analyser).connect(audioCtx.destination);
+  audioElem.addEventListener('loadedmetadata',()=>updateTime());
+  audioElem.addEventListener('timeupdate',()=>{if(!isNaN(audioElem.duration)){seek.value=(audioElem.currentTime/audioElem.duration)*100;updateTime();}});
+  audioElem.addEventListener('ended',()=>{playNext();});
+  playBtn.disabled=false;pauseBtn.disabled=true;}
+function updateTime(){function fmt(t){if(!isFinite(t))return'00:00';const m=Math.floor(t/60).toString().padStart(2,'0');const s=Math.floor(t%60).toString().padStart(2,'0');return`${m}:${s}`;}timeEl.textContent=`${fmt(audioElem.currentTime)} / ${fmt(audioElem.duration||0)}`;}
+function playNext(){currentIndex++;if(currentIndex>=fileQueue.length)currentIndex=0;loadTrack(fileQueue[currentIndex]);}
+function loadTrack(file){setupAudio(file);setCoverFromTag(file);highlightPlaylist();audioElem.play();}
+function highlightPlaylist(){Array.from(playlistEl.children).forEach((btn,i)=>btn.style.background=i===currentIndex?'rgba(124,58,237,0.3)':'rgba(255,255,255,0.05)');}
+function drawVisualizer(){if(!analyser)return;analyser.getByteFrequencyData(dataArray);const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);const cx=w/2,cy=h/2;
+const bars=180;const radius=Math.min(w,h)/5;for(let i=0;i<bars;i++){const val=dataArray[i%bufferLength]/255;const r=radius+val*250;const angle=(i/bars)*Math.PI*2;const x=cx+Math.cos(angle)*r;const y=cy+Math.sin(angle)*r;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(x,y);ctx.strokeStyle=`hsla(${i*2},100%,${50+val*40}%,0.9)`;ctx.lineWidth=2*devicePixelRatio;ctx.shadowBlur=10;ctx.shadowColor='rgba(124,58,237,0.7)';ctx.stroke();
+  if(val>0.5&&Math.random()<0.08){particles.push({x:cx+Math.cos(angle)*r,y:cy+Math.sin(angle)*r,dx:(Math.random()-0.5)*3,dy:(Math.random()-0.5)*3,radius:Math.random()*2+1,alpha:1});}}
+ctx.shadowBlur=0;ctx.beginPath();analyser.getByteTimeDomainData(dataArray);ctx.lineWidth=2*devicePixelRatio;ctx.strokeStyle='rgba(124,58,237,0.6)';ctx.moveTo(0,h/2);for(let i=0;i<bufferLength;i++){const v=dataArray[i]/128.0;const y=v*h/2;const x=(i/bufferLength)*w;ctx.lineTo(x,y);}ctx.stroke();
+for(let i=particles.length-1;i>=0;i--){let p=particles[i];ctx.beginPath();ctx.arc(p.x,p.y,p.radius,0,Math.PI*2);ctx.fillStyle=`rgba(255,255,255,${p.alpha})`;ctx.fill();p.x+=p.dx;p.y+=p.dy;p.alpha-=0.03;if(p.alpha<=0)particles.splice(i,1);}
+rafId=requestAnimationFrame(drawVisualizer);}
+playBtn.addEventListener('click',async()=>{await audioCtx.resume();audioElem.play();playBtn.disabled=true;pauseBtn.disabled=false;cancelAnimationFrame(rafId);drawVisualizer();});
+pauseBtn.addEventListener('click',()=>{audioElem.pause();playBtn.disabled=false;pauseBtn.disabled=true;cancelAnimationFrame(rafId);});
+seek.addEventListener('input',()=>{if(audioElem&&audioElem.duration){audioElem.currentTime=(seek.value/100)*audioElem.duration;updateTime();}});
+volume.addEventListener('input',()=>{if(audioElem)audioElem.volume=parseFloat(volume.value);});
+canvas.addEventListener('click',()=>{if(!document.fullscreenElement){canvas.requestFullscreen?.();document.getElementById('centerImg').style.transform='translate(-50%, -50%) scale(1.2)';}else{document.exitFullscreen?.();document.getElementById('centerImg').style.transform='translate(-50%, -50%) scale(1)';}});
+function setCoverFromTag(file){window.jsmediatags.read(file,{onSuccess:function(tag){if(tag.tags.picture){const pic=tag.tags.picture;let base64='';for(let i=0;i<pic.data.length;i++){base64+=String.fromCharCode(pic.data[i]);}coverImg.src=`data:${pic.format};base64,${btoa(base64)}`;}},onError:()=>{}});}
+fileEl.addEventListener('change',e=>{fileQueue=Array.from(e.target.files);currentIndex=0;playlistEl.innerHTML='';fileQueue.forEach((f,i)=>{const btn=document.createElement('button');btn.textContent=f.name;btn.addEventListener('click',()=>{currentIndex=i;loadTrack(f);});playlistEl.appendChild(btn);});loadTrack(fileQueue[currentIndex]);});
+</script>
+</body>
+</html>
